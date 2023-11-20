@@ -55,14 +55,16 @@ class DDQNActor:
 
     def __call__(self, state, argmax=False):
         with torch.no_grad():
+            q_intrinsic_val = self.q_net_intrinsic(state)
+            q_val = self.q_net(state)
             if self.args.print_values:
-                print("self.q_net_intrinsic(state)", self.q_net_intrinsic(state))
-                print("self.q_net(state)", self.q_net(state))
+                print("self.q_net_intrinsic(state)", q_intrinsic_val, q_intrinsic_val.argmax(1).item())
+                print("self.q_net(state)", q_val, q_val.argmax(1).item())
                 
-            out = self.q_net(state) + self.args.ngu_beta * self.q_net_intrinsic(state)
+            out = q_val + self.args.ngu_beta * q_intrinsic_val
             action = self._sample_action(out, argmax)
             if self.args.print_values:
-                print(f"ACTION BEFORE {action} AFTER INTRINSIC {self._sample_action(self.q_net(state), argmax)}", "\n")
+                print(f"ACTION BEFORE {action} AFTER INTRINSIC {self._sample_action(q_val, argmax)}", "\n")
 
             return action
 
@@ -102,12 +104,18 @@ class DDQNActor:
         model_dict = {
             "q_net": self.q_net.state_dict(),
             "q_net_intrinsic": self.q_net_intrinsic.state_dict(),
-            "hindsight": self.byol_hindsight.state_dict()
+            "hindsight": self.byol_hindsight.state_dict(),
+            "l2_norm": self.byol_hindsight.mean_l2norm,
         }
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json") 
+        byol_train_dict_file = os.path.join(self.args.save_dir, "byol_train_dict.json")
+
         with open(train_dict_file, "w") as f:
             json.dump(self._train_dict, f)
+        
+        with open(byol_train_dict_file, "w") as f:
+            json.dump(self.byol_hindsight.train_dict, f)
 
         torch.save(model_dict, self.save_file)
 
@@ -119,10 +127,16 @@ class DDQNActor:
         self.q_net.load_state_dict(model_dict["q_net"])
         self.q_net_intrinsic.load_state_dict(model_dict["q_net_intrinsic"])
         self.byol_hindsight.load_state_dict(model_dict["hindsight"])
+        self.byol_hindsight.mean_l2norm = model_dict["l2_norm"]
 
-        train_dict_file = os.path.join(self.args.save_dir, "train_dict.json") 
+        train_dict_file = os.path.join(self.args.save_dir, "train_dict.json")
+        byol_train_dict_file = os.path.join(self.args.save_dir, "byol_train_dict.json")
+
         with open(train_dict_file, "r") as f:
             self._train_dict = json.load(f)
+
+        with open(byol_train_dict_file, "r") as f:
+            self.byol_hindsight.train_dict = json.load(f)
 
     def train(self):
         """Train the model over the sampled batches of experiences."""

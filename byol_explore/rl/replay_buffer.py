@@ -255,11 +255,12 @@ class ExpertReplayBufferManager:
 
     @property
     def max_total_reward(self):
-        return max(e.total_reward for e in self.expert_buffers).item()
+        
+        return max(float(e.total_reward) for e in self.expert_buffers)
 
     @property
     def max_intrinsic_reward(self):
-        return self.buffer.max_intrinsic_reward
+        return float(self.buffer.max_intrinsic_reward)
 
     def _add_trajectory(self, traj: Trajectory):
         """Add the experiences from the trajectory to the normal replay buffer."""

@@ -47,7 +47,7 @@ def get_args():
     dqn_args.add_argument("--decay_episodes", type=int, default=8196, 
         help="Number of episodes before epsilon decays to min_epsilon.")
     dqn_args.add_argument("--tgt_tau", type=float, default=0.05,
-                    help="The tau value to control the update rate of the target DQN parameters.")
+        help="The tau value to control the update rate of the target DQN parameters.")
     dqn_args.add_argument("--memory_cap", type=int, default=262144, 
         help="Maximum size of the replay memory.")
     dqn_args.add_argument("--min_train_exps", type=int, default=2048, 
