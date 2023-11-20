@@ -7,16 +7,18 @@ def get_args():
         help="Location of the ROM")
     parser.add_argument("--evaluate", action="store_true",
         help="Evaluate the performance")
-    parser.add_argument("--print_values", action="store_true",
-        help="Evaluate the performance")
     parser.add_argument("--load", action="store_true",
         help="Load the models.")
     parser.add_argument("--save_dir", default="",
         help="Location of the saved models")
     parser.add_argument("--ckpt_save_dir", default="logs",
-        help="Location of the logs models")
+        help="Location of the logs models.")
     parser.add_argument("--save_iter", type=int, default=128,
-        help="How often to save the model")
+        help="After how many episode to save the model.")
+    parser.add_argument("--ckpt_iter", type=int, default=128,
+        help="After how many episode to save a checkpoint of the model.")
+    parser.add_argument("--print_values", action="store_true",
+        help="Evaluate the performance")
     
     parser.add_argument("--units", type=int, default=256,
         help="Number of hidden units to use in the networks")
@@ -47,7 +49,7 @@ def get_args():
     dqn_args.add_argument("--decay_episodes", type=int, default=8196, 
         help="Number of episodes before epsilon decays to min_epsilon.")
     dqn_args.add_argument("--tgt_tau", type=float, default=0.05,
-        help="The tau value to control the update rate of the target DQN parameters.")
+                    help="The tau value to control the update rate of the target DQN parameters.")
     dqn_args.add_argument("--memory_cap", type=int, default=262144, 
         help="Maximum size of the replay memory.")
     dqn_args.add_argument("--min_train_exps", type=int, default=2048, 
@@ -62,7 +64,13 @@ def get_args():
         help="Alpha used for sampling the n-step from beta-binomial distribution.")
     dqn_args.add_argument("--n_step_beta", type=float, default=2.0, 
         help="Beta used for sampling the n-step from beta-binomial distribution.")
-    
+    dqn_args.add_argument("--per_alpha", type=float, default=0.6, 
+        help="Alpha used for PER.")
+    dqn_args.add_argument("--per_beta", type=float, default=0.4, 
+        help="Beta used for PER.")
+    dqn_args.add_argument("--per_intrinsic_priority", type=float, default=0.1, 
+        help="How much to scale the error for intrinsic error for computing the priority.")
+
     byol_args = parser.add_argument_group("BYOL-Hindsight")
     byol_args.add_argument("--recon_lam", type=float, default=1.0,
         help="Lambda used for scaling the reconstruction error.")

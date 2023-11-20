@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 from dataclasses import dataclass
-
+from byol_explore.rl.per.prioritized_replay import PriortizedReplay
 import os
+
+
 @dataclass
 class Trajectory:
     states: list
@@ -14,7 +16,13 @@ class Trajectory:
     ep_return: float = 0
     total_intrinsic_reward: float = 0
 
-
+@dataclass
+class Experience:
+    state: np.ndarray
+    action: int
+    reward: float
+    next_state: np.ndarray
+    done: int
 
 class NGUReplayBuffer:
     def __init__(self, state_dim, max_size):
@@ -239,7 +247,8 @@ class ExpertReplayBufferManager:
         self.args = args
 
         # Initialize the normal replay buffer
-        self.buffer = ReplayBuffer(args, state_dim, max_size)
+        self.buffer = PriortizedReplay(
+            max_size, state_dim, alpha=self.args.per_alpha, beta=self.args.per_beta)
         
         # Initialize the expert replay buffers
         self.expert_buffers = [
@@ -262,17 +271,17 @@ class ExpertReplayBufferManager:
     def max_intrinsic_reward(self):
         return float(self.buffer.max_intrinsic_reward)
 
-    def _add_trajectory(self, traj: Trajectory):
+    def _add_trajectory(self, traj: Trajectory, errors: list):
         """Add the experiences from the trajectory to the normal replay buffer."""
         for i in range(len(traj.states)):
-            self.buffer.add(
-                traj.states[i],
+            self.buffer.add(errors[i],
+                [traj.states[i],
                 traj.actions[i],
                 traj.rewards[i],
                 traj.next_states[i],
-                traj.dones[i])
+                traj.dones[i]])
 
-    def add(self, traj: Trajectory):
+    def add(self, traj: Trajectory, errors: np.ndarray):
         """Add a trajectory."""
         # Check if it outperforms any of the experts
         sorted_idxs = [i[0] for i in sorted(enumerate(self.expert_buffers), key=lambda x: x[1].total_reward)]
@@ -287,9 +296,9 @@ class ExpertReplayBufferManager:
 
         # If at this point, then it wasn't better than any of the experts.
         # So, add the experiences to the normal replay buffer
-        self._add_trajectory(traj)
+        self._add_trajectory(traj, errors)
 
-    def sample(self, batch_size, byol_hindsight, n_step=1):
+    def sample(self, batch_size: int, byol_hindsight, n_step=1):
         """Sample experiences."""
         # Sample half of the experiences from the experts.
         expert_batch_size = int(batch_size * 0.5)
@@ -312,8 +321,9 @@ class ExpertReplayBufferManager:
                     batch[j].append(expert_batch[j])
 
         # Sample the normal replay buffer
+        idxs, is_weight = [], []
         if self.buffer.size >= int(batch_size * 0.5):
-            normal_batch = self.buffer.sample(int(batch_size * 0.5), byol_hindsight, n_step)
+            normal_batch, idxs, is_weight = self.buffer.sample(int(batch_size * 0.5), byol_hindsight)
             for i in range(len(normal_batch)):
                 batch[i].append(normal_batch[i])
 
@@ -321,10 +331,15 @@ class ExpertReplayBufferManager:
         for i in range(len(batch)):
             batch[i] = torch.tensor(np.concatenate(batch[i])).to(self.device)
 
-        return batch
+        return batch, idxs, is_weight
+
+    def update_priority(self, errors, idxs):
+        assert len(idxs) == len(errors)
+        for i in range(len(idxs)):
+            self.buffer.update(idxs[i], errors[i])
 
     def save(self, save_dir):
-        buffer_out_dir = os.path.join(save_dir, "replay_buffer.npz")
+        buffer_out_dir = os.path.join(save_dir, "replay_buffer.pt")
         self.buffer.save(buffer_out_dir)
 
         for i in range(self.args.num_experts):
@@ -333,7 +348,7 @@ class ExpertReplayBufferManager:
                 self.expert_buffers[i].save(expert_out_dir)
 
     def load(self, save_dir):
-        buffer_out_dir = os.path.join(save_dir, "replay_buffer.npz")
+        buffer_out_dir = os.path.join(save_dir, "replay_buffer.pt")
         self.buffer.load(buffer_out_dir)
 
         for i in range(self.args.num_experts):

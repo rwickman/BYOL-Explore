@@ -4,6 +4,7 @@ import os
 import numpy as np
 import json
 from scipy.stats import betabinom
+import math
 
 from byol_explore.networks.q_net import QNet
 from byol_explore.rl.replay_buffer import ExpertReplayBufferManager
@@ -57,11 +58,14 @@ class DDQNActor:
         with torch.no_grad():
             q_intrinsic_val = self.q_net_intrinsic(state)
             q_val = self.q_net(state)
+            out = q_val + self.args.ngu_beta * q_intrinsic_val
             if self.args.print_values:
                 print("self.q_net_intrinsic(state)", q_intrinsic_val, q_intrinsic_val.argmax(1).item())
                 print("self.q_net(state)", q_val, q_val.argmax(1).item())
+                print("out", out, self.epsilon_threshold)
                 
-            out = q_val + self.args.ngu_beta * q_intrinsic_val
+            
+
             action = self._sample_action(out, argmax)
             if self.args.print_values:
                 print(f"ACTION BEFORE {action} AFTER INTRINSIC {self._sample_action(q_val, argmax)}", "\n")
@@ -96,8 +100,38 @@ class DDQNActor:
         self._train_dict["episodes"] += 1
         self._train_dict["total_rewards"].append(traj.total_reward)
         self._train_dict["total_int_rewards"].append(traj.total_intrinsic_reward)
-        
-        self.buffer.add(traj)
+
+        # Compute the TD-errors
+        errors = np.zeros(len(traj.states))
+        num_batches = math.ceil(len(traj.states) / self.args.batch_size)
+        for i in range(num_batches):
+            start_idx = i*self.args.batch_size
+            end_idx = (i+1)*self.args.batch_size
+
+            q_vals, td_targets = self.q_net.get_val_preds(
+                torch.tensor(traj.states[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.actions[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.rewards[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.next_states[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.dones[start_idx:end_idx]).to(self.device),
+            )
+
+            q_intrinsic_vals, td_targets_intrinsic = self.q_net_intrinsic.get_val_preds(
+                torch.tensor(traj.states[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.actions[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.rewards[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.next_states[start_idx:end_idx]).to(self.device),
+                torch.tensor(traj.dones[start_idx:end_idx]).to(self.device),
+            )
+
+            td_errors = self.q_net_intrinsic.get_td_errors(q_vals, td_targets)
+            td_errors_int = self.q_net_intrinsic.get_td_errors(q_intrinsic_vals, td_targets_intrinsic)
+            td_errors = td_errors + self.args.per_intrinsic_priority * td_errors_int
+
+
+            errors[start_idx:end_idx] = td_errors
+
+        self.buffer.add(traj, errors)
 
     def save(self):
         self.buffer.save(self.args.save_dir)
@@ -117,11 +151,14 @@ class DDQNActor:
         with open(byol_train_dict_file, "w") as f:
             json.dump(self.byol_hindsight.train_dict, f)
 
+        if self._train_dict["episodes"] % self.args.ckpt_iter == 0:
+            torch.save(model_dict, os.path.join(self.args.save_dir, f"models_{self._train_dict['episodes']}.pt"))
+
         torch.save(model_dict, self.save_file)
 
     def load(self):
-        # if not self.args.evaluate:
-        self.buffer.load(self.args.save_dir)
+        if not self.args.evaluate:
+            self.buffer.load(self.args.save_dir)
 
         model_dict = torch.load(self.save_file)
         self.q_net.load_state_dict(model_dict["q_net"])
@@ -131,12 +168,12 @@ class DDQNActor:
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json")
         byol_train_dict_file = os.path.join(self.args.save_dir, "byol_train_dict.json")
-
         with open(train_dict_file, "r") as f:
             self._train_dict = json.load(f)
 
-        with open(byol_train_dict_file, "r") as f:
-            self.byol_hindsight.train_dict = json.load(f)
+        if not self.args.evaluate:
+            with open(byol_train_dict_file, "r") as f:
+                self.byol_hindsight.train_dict = json.load(f)
 
     def train(self):
         """Train the model over the sampled batches of experiences."""
@@ -146,14 +183,15 @@ class DDQNActor:
             n_step = self.args.n_steps
 
         # Sample a batch of experiences
-        states, actions, rewards, intrinsic_rewards, next_states, dones = self.buffer.sample(
+        batch, idxs, is_weight = self.buffer.sample(
             self.args.batch_size, self.byol_hindsight, n_step)
-        
+        states, actions, rewards, intrinsic_rewards, next_states, dones = batch
         # Update the BYOL-Hindsight models 
         self.byol_hindsight.update(states, actions, next_states)
+
         #print("intrinsic_rewards", intrinsic_rewards)
-        loss = self.q_net.train(states, actions, rewards, next_states, dones, n_step, max_total_reward=self.buffer.max_total_reward)
-        intrinsic_loss = self.q_net_intrinsic.train(
+        loss, td_errors = self.q_net.train(states, actions, rewards, next_states, dones, n_step, max_total_reward=self.buffer.max_total_reward)
+        intrinsic_loss, td_errors_int = self.q_net_intrinsic.train(
             states,
             actions,
             intrinsic_rewards.detach(),
@@ -161,31 +199,13 @@ class DDQNActor:
             dones,
             n_step,
             max_total_reward=self.buffer.max_intrinsic_reward)
+        
+        # Update the the PER priorities
+        if len(idxs) > 0:
+            td_errors = td_errors + self.args.per_intrinsic_priority * td_errors_int
+            start_idx = len(td_errors) - len(idxs)
+            self.buffer.update_priority(td_errors[start_idx:], idxs)
+        
 
         self._train_dict["loss"].append(loss)
         self._train_dict["intrinsic_loss"].append(intrinsic_loss)
-
-
-    # def train(self):
-    #     """Train the model over the sampled batches of experiences."""
-    #     if self.args.n_steps > 1:
-    #         n_step = betabinom.rvs(self.args.n_steps, self.args.n_step_alpha, self.args.n_step_beta) + 1
-    #     else:
-    #         n_step = self.args.n_steps
-
-    #     # Sample a batch of experiences
-    #     states, actions, rewards, next_states, org_next_states, dones = self.buffer.sample(
-    #         self.args.batch_size, n_step)
-        
-    #     # Update the BYOL-Hindsight models
-    #     self.byol_hindsight.update(states, actions, next_states)
-
-    #     # Compute the intrinsic rewards
-    #     intrinsic_rewards = self.byol_hindsight.get_intrinsic_reward(
-    #         states, actions, org_next_states)
-
-    #     loss = self.q_net.train(states, actions, rewards, next_states, dones, n_step)
-    #     intrinsic_loss = self.q_net_intrinsic.train(states, actions, intrinsic_rewards, org_next_states, dones)
-
-    #     self._train_dict["loss"].append(loss)
-    #     self._train_dict["intrinsic_loss"].append(intrinsic_loss)

@@ -39,8 +39,7 @@ class QNet(nn.Module):
     def forward(self, state):
         return self.net(state)
     
-    def train(self, states, actions, rewards, next_states, dones, n_step=1, max_total_reward=None):
-        """Train the Q-network."""
+    def get_val_preds(self, states, actions, rewards, next_states, dones, n_step=1, max_total_reward=None):
         # Get the Q-values for the actions
         q_vals_matrix = self.net(states)
         q_vals = q_vals_matrix.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -62,10 +61,15 @@ class QNet(nn.Module):
                 td_targets = rewards + self.gamma ** n_step * dqn_target
             else:
                 td_targets = rewards + self.gamma ** n_step * dqn_target * (1 - dones)
-            # print("self.gamma**n_step", self.gamma**n_step, "n_step", n_step)
-            # print("self.gamma ** n_step * dqn_target * (1 - dones)", self.gamma ** n_step * dqn_target * (1 - dones))
-            # print("dones", dones)
-            # print("td_targets", td_targets)
+        
+        return q_vals, td_targets
+
+    def get_td_errors(self, q_vals, td_targets):
+        return torch.abs(q_vals-td_targets).detach().cpu().numpy()
+
+    def train(self, states, actions, rewards, next_states, dones, n_step=1, max_total_reward=None):
+        """Train the Q-network."""
+        q_vals, td_targets = self.get_val_preds(states, actions, rewards, next_states, dones)
         
         # print("q_vals", q_vals)
         self.optimizer.zero_grad()
@@ -77,4 +81,7 @@ class QNet(nn.Module):
         # Update the target Q-Network
         self._update_target()
 
-        return loss.item()
+        td_errors = self.get_td_errors(q_vals, td_targets)
+
+
+        return loss.item(), td_errors
