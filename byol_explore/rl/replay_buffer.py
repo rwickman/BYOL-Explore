@@ -2,7 +2,8 @@ import torch
 import numpy as np
 from dataclasses import dataclass
 from byol_explore.rl.per.prioritized_replay import PriortizedReplay
-import os
+import json, os
+from byol_explore.utils.util import get_device, get_n_step_trajectory
 
 
 @dataclass
@@ -32,7 +33,7 @@ class NGUReplayBuffer:
         self.ptr = 0
         self.size = 0
         self.max_size = max_size
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_device()
 
     def add(self, state, action, next_state):
         self.state[self.ptr] = state
@@ -61,7 +62,7 @@ class ReplayBuffer:
         self.ptr = 0
         self.size = 0
         self.max_size = max_size
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_device()
 
     def add(self, state, action, reward, next_state, done):
         self.states[self.ptr] = state
@@ -74,35 +75,33 @@ class ReplayBuffer:
         self.size = min(self.size + 1, self.max_size)
 
 
-    def sample(self, batch_size, byol_hindsight, n_step=1):
+    def sample(self, batch_size, n_step=1):
         ind = np.random.randint(0, self.size, size=batch_size)
 
+        states, actions, next_states = self.states[ind], self.actions[ind], self.next_states[ind]
 
-        if len(ind) > 0:
-            if n_step == 1:
-                states, actions, next_states = self.states[ind], self.actions[ind], self.next_states[ind]
-                intrinsic_rewards = byol_hindsight.get_intrinsic_reward(
-                    torch.tensor(states).to(self.device),
-                    torch.tensor(actions).to(self.device),
-                    torch.tensor(next_states).to(self.device)).detach().cpu().numpy()
-                return (
-                    states,
-                    actions,
-                    self.rewards[ind],
-                    intrinsic_rewards,
-                    next_states,
-                    self.dones[ind]
-                )
-            else:
-                rewards, intrinsic_rewards, next_states, dones = self._get_n_step_trajectory(ind, byol_hindsight, n_step)
-                return (
-                    self.states[ind],
-                    self.actions[ind],
-                    rewards,
-                    intrinsic_rewards,
-                    next_states,
-                    dones
-                )
+        if n_step == 1:
+            return (
+                states,
+                actions,
+                self.rewards[ind],
+                next_states,
+                next_states,
+                self.dones[ind],
+                self.dones[ind],
+            )
+        else:
+            org_next_states, org_dones = next_states, self.dones[ind]
+            rewards,next_states, dones = self._get_n_step_trajectory(ind, n_step)
+            return (
+                self.states[ind],
+                self.actions[ind],
+                rewards,
+                next_states,
+                org_next_states,
+                dones,
+                org_dones
+            )
 
     def save(self, out_file):
         buffer_dict = {
@@ -130,52 +129,58 @@ class ReplayBuffer:
         self.size = buffer_dict["size"]
         self.max_intrinsic_reward = buffer_dict["max_intrinsic_reward"]
 
-    def _get_n_step_trajectory(self, ind, byol_hindsight, n_step):
-        rewards, intrinsic_rewards, next_states, dones = [], [], [], []
+    def _get_n_step_trajectory(self, ind, n_step):
         
-        # Get all the indxs need for the n-step return
-        all_inds = [
-            list(range(idx, min(idx + n_step - 1, self.size - 1) + 1))
-            for idx in ind]
-        # Flatten them
-        all_inds = np.array([j for s in all_inds for j in s])
+        rewards, next_states, dones = get_n_step_trajectory(
+            ind, n_step, self.next_states, self.rewards, self.dones, self.size, self.args.gamma)
+        return rewards, next_states, dones
 
-        # Get the intrinsic rewards for all current and all n-step indices
-        one_step_intrinsic_rewards = byol_hindsight.get_intrinsic_reward(
-            torch.tensor(self.states[all_inds]).to(self.device),
-            torch.tensor(self.actions[all_inds]).to(self.device),
-            torch.tensor(self.next_states[all_inds]).to(self.device)).detach().cpu().numpy()
+    # def _get_n_step_trajectory(self, ind, , n_step):
+    #     rewards, intrinsic_rewards, next_states, dones = [], [], [], []
+        
+    #     # Get all the indxs need for the n-step return
+    #     all_inds = [
+    #         list(range(idx, min(idx + n_step - 1, self.size - 1) + 1))
+    #         for idx in ind]
+    #     # Flatten them
+    #     all_inds = np.array([j for s in all_inds for j in s])
 
-        cur_idx = 0
-        for idx in ind:
+    #     # Get the intrinsic rewards for all current and all n-step indices
+    #     one_step_intrinsic_rewards = byol_hindsight.get_intrinsic_reward(
+    #         torch.tensor(self.states[all_inds]).to(self.device),
+    #         torch.tensor(self.actions[all_inds]).to(self.device),
+    #         torch.tensor(self.next_states[all_inds]).to(self.device)).detach().cpu().numpy()
+
+    #     cur_idx = 0
+    #     for idx in ind:
             
-            final_idx = min(idx + n_step - 1, self.size - 1)
+    #         final_idx = min(idx + n_step - 1, self.size - 1)
 
-            reward = self.rewards[final_idx]
-            intrinsic_reward = one_step_intrinsic_rewards[final_idx - idx + cur_idx]
+    #         reward = self.rewards[final_idx]
+    #         intrinsic_reward = one_step_intrinsic_rewards[final_idx - idx + cur_idx]
 
 
-            next_state, done = self.next_states[final_idx], self.dones[final_idx]
+    #         next_state, done = self.next_states[final_idx], self.dones[final_idx]
             
-            for i in reversed(range(idx, final_idx)):
-                reward = self.rewards[i] + reward * self.args.gamma * (1-self.dones[i])
-                intrinsic_reward = one_step_intrinsic_rewards[i - idx + cur_idx] + intrinsic_reward * self.args.gamma * (1-self.dones[i])
-                if self.dones[i]:
-                    next_state, done = self.next_states[i], self.dones[i]
-                
-            cur_idx += final_idx - idx + 1
-            
-            rewards.append(reward)
-            intrinsic_rewards.append(intrinsic_reward)
-            next_states.append(next_state)
-            dones.append(done)
+    #         for i in reversed(range(idx, final_idx)):
+    #             reward = self.rewards[i] + reward * self.args.gamma * (1-self.dones[i])
+    #             intrinsic_reward = one_step_intrinsic_rewards[i - idx + cur_idx] + intrinsic_reward * self.args.gamma * (1-self.dones[i])
+    #             if self.dones[i]:
+    #                 next_state, done = self.next_states[i], self.dones[i]
+  
+    #         cur_idx += final_idx - idx + 1
 
-        rewards = np.array(rewards, dtype=np.float32)
-        intrinsic_rewards = np.array(intrinsic_rewards, dtype=np.float32)
-        next_states = np.stack(next_states)
-        dones = np.array(dones, dtype=np.int8)
+    #         rewards.append(reward)
+    #         intrinsic_rewards.append(intrinsic_reward)
+    #         next_states.append(next_state)
+    #         dones.append(done)
 
-        return rewards, intrinsic_rewards, next_states, dones
+    #     rewards = np.array(rewards, dtype=np.float32)
+    #     intrinsic_rewards = np.array(intrinsic_rewards, dtype=np.float32)
+    #     next_states = np.stack(next_states)
+    #     dones = np.array(dones, dtype=np.int8)
+
+    #     return rewards, intrinsic_rewards, next_states, dones
 
 
 class ExpertReplayBuffer(ReplayBuffer):
@@ -187,7 +192,7 @@ class ExpertReplayBuffer(ReplayBuffer):
         self.is_expert = False
         self.size = 0
         self.has_saved = False
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = get_device()
 
     def set_trajectory(self, traj: Trajectory):
         self.states = traj.states
@@ -255,21 +260,34 @@ class ExpertReplayBufferManager:
             ExpertReplayBuffer(args, -1e9, -1e9) for _ in range(self.args.num_experts)
         ]
 
+        self.device = get_device()
+        self._reward_stats = {
+            "min_total_reward": 1e9,
+            "max_total_reward": -1e9,
+            "min_total_int_reward": 1e9,
+            "max_total_int_reward": -1e9,
+        }
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @property
     def size(self):
         return self.buffer.size + sum(b.size for b in self.expert_buffers)
 
     @property
-    def max_total_reward(self):
-        
-        return max(float(e.total_reward) for e in self.expert_buffers)
+    def reward_bounds(self):
+        return self._reward_stats["min_total_reward"], self._reward_stats["max_total_reward"]
 
     @property
-    def max_intrinsic_reward(self):
-        return float(self.buffer.max_intrinsic_reward)
+    def intrinsic_reward_bounds(self):
+        return self._reward_stats["min_total_int_reward"], self._reward_stats["max_total_int_reward"]
+
+    def _update_reward_stats(self, traj: Trajectory):
+        """Update the reward statistics."""
+        self._reward_stats["min_total_reward"] = min(self._reward_stats["min_total_reward"], traj.total_reward)
+        self._reward_stats["max_total_reward"] = max(self._reward_stats["max_total_reward"], traj.total_reward)
+        self._reward_stats["min_total_int_reward"] = min(self._reward_stats["min_total_int_reward"], traj.total_intrinsic_reward)
+        self._reward_stats["max_total_int_reward"] = max(self._reward_stats["max_total_int_reward"], traj.total_intrinsic_reward)
+
 
     def _add_trajectory(self, traj: Trajectory, errors: list):
         """Add the experiences from the trajectory to the normal replay buffer."""
@@ -283,6 +301,7 @@ class ExpertReplayBufferManager:
 
     def add(self, traj: Trajectory, errors: np.ndarray):
         """Add a trajectory."""
+        self._update_reward_stats(traj)
         # Check if it outperforms any of the experts
         sorted_idxs = [i[0] for i in sorted(enumerate(self.expert_buffers), key=lambda x: x[1].total_reward)]
         self.buffer.max_intrinsic_reward = max(
@@ -292,38 +311,42 @@ class ExpertReplayBufferManager:
             if self.expert_buffers[i].compare(traj.ep_return, traj.total_reward):
                 self.expert_buffers[i] = ExpertReplayBuffer(self.args, traj.ep_return, traj.total_reward)
                 self.expert_buffers[i].set_trajectory(traj)
+
+                # Still add to the original replay buffer
+                self._add_trajectory(traj, errors)
                 return
 
         # If at this point, then it wasn't better than any of the experts.
         # So, add the experiences to the normal replay buffer
         self._add_trajectory(traj, errors)
 
-    def sample(self, batch_size: int, byol_hindsight, n_step=1):
+    def sample(self, batch_size: int, n_step=1):
         """Sample experiences."""
+        # states, actions, rewards, next_states, org_next_states, dones, org_dones
+        batch = [[], [], [], [], [], [], []]
+
         # Sample half of the experiences from the experts.
         expert_batch_size = int(batch_size * 0.5)
-        size_per_expert = expert_batch_size // self.args.num_experts
+        if self.args.num_experts > 1:
+            size_per_expert = expert_batch_size // self.args.num_experts
 
-        # states, actions, rewards, intrinsic_rewards, next_states, dones
-        batch = [[], [], [], [], [], []]
+            # Get the probability of sampling each expert
+            expert_rewards = np.array([e.total_reward + e.ep_return for e in self.expert_buffers])
+            expert_rewards = expert_rewards - expert_rewards.min() + 1.0
+            select_prob = expert_rewards / expert_rewards.sum()
 
-        # Get the probability of sampling each expert
-        expert_rewards = np.array([e.total_reward + e.ep_return for e in self.expert_buffers])
-        expert_rewards = expert_rewards - expert_rewards.min() + 1.0
-        select_prob = expert_rewards / expert_rewards.sum()
-        # Sample the expert replay buffers
-        for _ in range(self.args.num_experts):
-            i = np.random.choice(self.args.num_experts, p=select_prob)
-            if self.expert_buffers[i].is_expert:
-                expert_batch = self.expert_buffers[i].sample(size_per_expert, byol_hindsight, n_step)
-
-                for j in range(len(expert_batch)):
-                    batch[j].append(expert_batch[j])
+            # Sample the expert replay buffers
+            for _ in range(self.args.num_experts):
+                i = np.random.choice(self.args.num_experts, p=select_prob)
+                if self.expert_buffers[i].is_expert:
+                    expert_batch = self.expert_buffers[i].sample(size_per_expert, n_step)
+                    for j in range(len(expert_batch)):
+                        batch[j].append(expert_batch[j])
 
         # Sample the normal replay buffer
         idxs, is_weight = [], []
         if self.buffer.size >= int(batch_size * 0.5):
-            normal_batch, idxs, is_weight = self.buffer.sample(int(batch_size * 0.5), byol_hindsight)
+            normal_batch, idxs, is_weight = self.buffer.sample(int(batch_size * 0.5), n_step)
             for i in range(len(normal_batch)):
                 batch[i].append(normal_batch[i])
 
@@ -346,6 +369,11 @@ class ExpertReplayBufferManager:
             if not self.expert_buffers[i].has_saved:
                 expert_out_dir = os.path.join(save_dir, f"expert_replay_buffer_{i}.npz")
                 self.expert_buffers[i].save(expert_out_dir)
+        
+        reward_stats_file = os.path.join(save_dir, "reward_stats.json")
+        with open(reward_stats_file, "w") as f:
+            json.dump(self._reward_stats, f)
+
 
     def load(self, save_dir):
         buffer_out_dir = os.path.join(save_dir, "replay_buffer.pt")
@@ -355,3 +383,8 @@ class ExpertReplayBufferManager:
             expert_out_dir = os.path.join(save_dir, f"expert_replay_buffer_{i}.npz")
             if os.path.exists(expert_out_dir):
                 self.expert_buffers[i].load(expert_out_dir)
+
+        reward_stats_file = os.path.join(save_dir, "reward_stats.json")
+        with open(reward_stats_file, "r") as f:
+            self._reward_stats = json.load(f)
+        

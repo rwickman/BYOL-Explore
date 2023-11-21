@@ -74,6 +74,8 @@ def get_args():
     byol_args = parser.add_argument_group("BYOL-Hindsight")
     byol_args.add_argument("--recon_lam", type=float, default=1.0,
         help="Lambda used for scaling the reconstruction error.")
+    byol_args.add_argument("--byol_delay", type=int, default=1,
+        help="Delay updates for BYOL.")
 
     parser.add_argument("--no_ngu", action="store_true",
         help="Don't use NGU.")

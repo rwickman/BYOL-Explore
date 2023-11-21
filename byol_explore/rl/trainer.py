@@ -82,8 +82,10 @@ class Trainer:
                     print(f"{time.time() - start_time:.2f}: TOTAL REWARD {self._trajs[i].total_reward} INTRINSIC REWARD {self._trajs[i].total_intrinsic_reward.item()} for episode {ep_idx} EPSILON {self.agent.epsilon_threshold}")
                     self._wrap_up(i)
                     if ep_idx % self.args.save_iter == 0:
+                        start_save_time = time.time()
                         self.agent.save()
-                        # self.args.ngu_beta = min(np.random.beta(0.3, 10), self.org_beta)
+                        print(f"SAVE TIME {time.time() - start_save_time}")
+                    # self.args.ngu_beta = np.random.beta(0.6, 10)
 
                     print("self.args.ngu_beta", self.args.ngu_beta)
 

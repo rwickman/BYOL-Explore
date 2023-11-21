@@ -39,7 +39,7 @@ class QNet(nn.Module):
     def forward(self, state):
         return self.net(state)
     
-    def get_val_preds(self, states, actions, rewards, next_states, dones, n_step=1, max_total_reward=None):
+    def get_val_preds(self, states, actions, rewards, next_states, dones, n_step=1, min_total_reward=None, max_total_reward=None, ):
         # Get the Q-values for the actions
         q_vals_matrix = self.net(states)
         q_vals = q_vals_matrix.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -53,9 +53,9 @@ class QNet(nn.Module):
             # Compute the td-targets using Double Q-Learning
             dqn_target = q_next_target.gather(1, next_actions.unsqueeze(1)).squeeze(1).detach()
             
-            # Small prevention for over-estimation 
-            if max_total_reward != None:
-                dqn_target = dqn_target.clamp(max=max_total_reward)
+            # # Small prevention for over-estimation 
+            # if max_total_reward != None:
+            #     dqn_target = dqn_target.clamp(max=max_total_reward, min=min_total_reward)
             # print("dqn_target", dqn_target)
             if self.continuous:
                 td_targets = rewards + self.gamma ** n_step * dqn_target
@@ -67,9 +67,17 @@ class QNet(nn.Module):
     def get_td_errors(self, q_vals, td_targets):
         return torch.abs(q_vals-td_targets).detach().cpu().numpy()
 
-    def train(self, states, actions, rewards, next_states, dones, n_step=1, max_total_reward=None):
+    def train(self, states, actions, rewards, next_states, dones, n_step=1, min_total_reward=None, max_total_reward=None, ):
         """Train the Q-network."""
-        q_vals, td_targets = self.get_val_preds(states, actions, rewards, next_states, dones)
+        q_vals, td_targets = self.get_val_preds(
+            states,
+            actions,
+            rewards,
+            next_states,
+            dones,
+            n_step=n_step,
+            min_total_reward=min_total_reward,
+            max_total_reward=max_total_reward)
         
         # print("q_vals", q_vals)
         self.optimizer.zero_grad()

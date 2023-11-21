@@ -184,21 +184,36 @@ class DDQNActor:
 
         # Sample a batch of experiences
         batch, idxs, is_weight = self.buffer.sample(
-            self.args.batch_size, self.byol_hindsight, n_step)
-        states, actions, rewards, intrinsic_rewards, next_states, dones = batch
-        # Update the BYOL-Hindsight models 
-        self.byol_hindsight.update(states, actions, next_states)
+            self.args.batch_size, n_step)
+        states, actions, rewards, next_states, org_next_states, dones, org_dones = batch
 
-        #print("intrinsic_rewards", intrinsic_rewards)
-        loss, td_errors = self.q_net.train(states, actions, rewards, next_states, dones, n_step, max_total_reward=self.buffer.max_total_reward)
+        # Update the BYOL-Hindsight models
+        if len(self._train_dict["loss"]) % self.args.byol_delay == 0:
+            self.byol_hindsight.update(states, actions, org_next_states)
+
+        # Get the intrinsic reward
+        intrinsic_rewards = self.byol_hindsight.get_intrinsic_reward(
+            states, actions, org_next_states)
+        
+        # Update the Q-networks
+        loss, td_errors = self.q_net.train(
+            states,
+            actions,
+            rewards,
+            next_states,
+            dones,
+            n_step,
+            min_total_reward=self.buffer.reward_bounds[0],
+            max_total_reward=self.buffer.reward_bounds[1])
+
         intrinsic_loss, td_errors_int = self.q_net_intrinsic.train(
             states,
             actions,
             intrinsic_rewards.detach(),
-            next_states,
-            dones,
-            n_step,
-            max_total_reward=self.buffer.max_intrinsic_reward)
+            org_next_states,
+            org_dones,
+            min_total_reward=self.buffer.intrinsic_reward_bounds[0],
+            max_total_reward=self.buffer.intrinsic_reward_bounds[1])
         
         # Update the the PER priorities
         if len(idxs) > 0:
