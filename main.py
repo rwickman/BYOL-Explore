@@ -67,24 +67,24 @@ if __name__ == "__main__":
                 state, reward, done, info, terminated = env.step(action)
                 total_reward += reward
 
-                states, actions, rewards, intrinsic_rewards, next_states, dones = agent.buffer.sample(
-                    args.batch_size, agent.byol_hindsight, n_step=1)
+                # states, actions, rewards, intrinsic_rewards, next_states, dones = agent.buffer.sample(
+                #     args.batch_size, agent.byol_hindsight, n_step=1)
                  
-                state_ten = torch.tensor(state, dtype=torch.float32).to("cuda").unsqueeze(0)
-                action_ten = torch.tensor(action).to("cuda").unsqueeze(0)  
-                next_state_ten = torch.tensor(last_obs, dtype=torch.float32).to("cuda").unsqueeze(0)
+                # state_ten = torch.tensor(state, dtype=torch.float32).to("cuda").unsqueeze(0)
+                # action_ten = torch.tensor(action).to("cuda").unsqueeze(0)  
+                # next_state_ten = torch.tensor(last_obs, dtype=torch.float32).to("cuda").unsqueeze(0)
                 
-                states = torch.concatenate([states, state_ten])
-                actions = torch.concatenate([actions, action_ten])
-                next_states = torch.concatenate([next_states, next_state_ten])
+                # states = torch.concatenate([states, state_ten])
+                # actions = torch.concatenate([actions, action_ten])
+                # next_states = torch.concatenate([next_states, next_state_ten])
 
-                intrinsic_rewards = agent.byol_hindsight.get_intrinsic_reward(
-                    states,
-                    actions,
-                    next_states
-                    )
+                # intrinsic_rewards = agent.byol_hindsight.get_intrinsic_reward(
+                #     states,
+                #     actions,
+                #     next_states
+                #     )
 
-                total_int_reward += intrinsic_rewards[-1].item()
+                # total_int_reward += intrinsic_rewards[-1].item()
                 total_reward += reward
                 last_obs = state.copy()
                 if total_reward > 500:
