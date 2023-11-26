@@ -5,6 +5,11 @@ import numpy as np
 
 from torch.optim import Adam
 
+def weighted_smooth_l1_loss(input, target, weights):
+    # type: (Tensor, Tensor, Tensor) -> Tensor
+    t = torch.abs(input - target)
+    return (weights * torch.where(t < 1, 0.5 * t ** 2, t - 0.5)).mean()
+
 class QNet(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim, num_hidden=1, gamma=0.997, tau=0.05, continuous=False):
         super().__init__()
@@ -54,8 +59,8 @@ class QNet(nn.Module):
             dqn_target = q_next_target.gather(1, next_actions.unsqueeze(1)).squeeze(1).detach()
             
             # # Small prevention for over-estimation 
-            # if max_total_reward != None:
-            #     dqn_target = dqn_target.clamp(max=max_total_reward, min=min_total_reward)
+            if max_total_reward != None:
+                dqn_target = dqn_target.clamp(max=max_total_reward, min=min_total_reward)
             # print("dqn_target", dqn_target)
             if self.continuous:
                 td_targets = rewards + self.gamma ** n_step * dqn_target
@@ -67,7 +72,7 @@ class QNet(nn.Module):
     def get_td_errors(self, q_vals, td_targets):
         return torch.abs(q_vals-td_targets).detach().cpu().numpy()
 
-    def train(self, states, actions, rewards, next_states, dones, n_step=1, min_total_reward=None, max_total_reward=None, ):
+    def train(self, states, actions, rewards, next_states, dones, n_step=1, is_weight=None, min_total_reward=None, max_total_reward=None, ):
         """Train the Q-network."""
         q_vals, td_targets = self.get_val_preds(
             states,
@@ -81,7 +86,10 @@ class QNet(nn.Module):
         
         # print("q_vals", q_vals)
         self.optimizer.zero_grad()
-        loss = self.loss_fn(q_vals, td_targets)
+        if is_weight != None:
+            loss = weighted_smooth_l1_loss(q_vals, td_targets, is_weight)
+        else:
+            loss = self.loss_fn(q_vals, td_targets)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), 5.0)
         self.optimizer.step()

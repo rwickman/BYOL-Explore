@@ -85,7 +85,9 @@ class Trainer:
                         start_save_time = time.time()
                         self.agent.save()
                         print(f"SAVE TIME {time.time() - start_save_time}")
-                    # self.args.ngu_beta = np.random.beta(0.6, 10)
+                    
+                    if self.args.rand_beta:
+                        self.args.ngu_beta = np.random.beta(1.0, 10)
 
                     print("self.args.ngu_beta", self.args.ngu_beta)
 

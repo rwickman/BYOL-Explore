@@ -268,6 +268,9 @@ class ExpertReplayBufferManager:
             "max_total_int_reward": -1e9,
         }
 
+    @property
+    def expert_size(self):
+        return sum(b.size for b in self.expert_buffers)
 
     @property
     def size(self):
@@ -325,15 +328,20 @@ class ExpertReplayBufferManager:
         # states, actions, rewards, next_states, org_next_states, dones, org_dones
         batch = [[], [], [], [], [], [], []]
 
+        batch_is_weight = torch.ones(
+            batch_size, dtype=torch.float32, device=self.device)
+
         # Sample half of the experiences from the experts.
         expert_batch_size = int(batch_size * 0.5)
         if self.args.num_experts > 1:
+            normal_batch_size = batch_size - expert_batch_size
             size_per_expert = expert_batch_size // self.args.num_experts
 
             # Get the probability of sampling each expert
             expert_rewards = np.array([e.total_reward + e.ep_return for e in self.expert_buffers])
             expert_rewards = expert_rewards - expert_rewards.min() + 1.0
             select_prob = expert_rewards / expert_rewards.sum()
+            sample_probs = []
 
             # Sample the expert replay buffers
             for _ in range(self.args.num_experts):
@@ -342,11 +350,21 @@ class ExpertReplayBufferManager:
                     expert_batch = self.expert_buffers[i].sample(size_per_expert, n_step)
                     for j in range(len(expert_batch)):
                         batch[j].append(expert_batch[j])
+                    sample_probs += [select_prob[i]] *size_per_expert
 
+
+            # Compute the expert importance weights
+            sample_probs = torch.tensor(sample_probs, dtype=torch.float32, device=self.device)
+            expert_is_weights = (self.expert_size * sample_probs) ** -self.buffer.beta
+            expert_is_weights = expert_is_weights / expert_is_weights.max()
+
+        else:
+            normal_batch_size = batch_size
         # Sample the normal replay buffer
+        
         idxs, is_weight = [], []
-        if self.buffer.size >= int(batch_size * 0.5):
-            normal_batch, idxs, is_weight = self.buffer.sample(int(batch_size * 0.5), n_step)
+        if self.buffer.size >= normal_batch_size:
+            normal_batch, idxs, is_weight = self.buffer.sample(normal_batch_size, n_step)
             for i in range(len(normal_batch)):
                 batch[i].append(normal_batch[i])
 
@@ -354,7 +372,11 @@ class ExpertReplayBufferManager:
         for i in range(len(batch)):
             batch[i] = torch.tensor(np.concatenate(batch[i])).to(self.device)
 
-        return batch, idxs, is_weight
+        batch_is_weight = torch.ones(len(batch[i]), dtype=torch.float32, device=self.device)
+        batch_is_weight[:len(is_weight)] = expert_is_weights
+        batch_is_weight[-len(is_weight):] = torch.tensor(is_weight, dtype=torch.float32).to(self.device)
+
+        return batch, idxs, batch_is_weight
 
     def update_priority(self, errors, idxs):
         assert len(idxs) == len(errors)

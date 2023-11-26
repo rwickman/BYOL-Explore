@@ -3,8 +3,8 @@ import argparse
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rom", default="./LoZ.nes", 
-        help="Location of the ROM")
+    parser.add_argument("--env", default="MountainCar-v0", 
+        help="Environment to run")
     parser.add_argument("--evaluate", action="store_true",
         help="Evaluate the performance")
     parser.add_argument("--load", action="store_true",
@@ -76,6 +76,14 @@ def get_args():
         help="Lambda used for scaling the reconstruction error.")
     byol_args.add_argument("--byol_delay", type=int, default=1,
         help="Delay updates for BYOL.")
+    byol_args.add_argument("--rand_beta", action="store_true",
+        help="Randomize the beta value.")
+    byol_args.add_argument("--byol_emb_dim", type=int, default=512,
+        help="Size of the BYOL embeddings dimension.")
+    byol_args.add_argument("--byol_latent_dim", type=int, default=256,
+        help="Size of the BYOL latent dimension.")
+    byol_args.add_argument("--byol_num_hidden", type=int, default=2,
+        help="Size of the BYOL latent dimension.")
 
     parser.add_argument("--no_ngu", action="store_true",
         help="Don't use NGU.")

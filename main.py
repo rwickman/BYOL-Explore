@@ -13,36 +13,31 @@ if __name__ == "__main__":
     if not os.path.exists(args.save_dir):
         os.mkdir(args.save_dir)
 
-    # action_space = 4
-    # obs_space = 8
-    action_space = 3
-    obs_space = 2
 
-    agent = DDQNActor(args, obs_space, action_space)
-    if args.load:
-        agent.load()
 
     if not args.evaluate:
-        # env = SubprocVecEnv(
-        #     [lambda:  gym.make("LunarLander-v2") for i in range(args.n_envs)])
-        # env = SubprocVecEnv(
-        #     [lambda:  gym.make("CartPole-v1") for i in range(args.n_envs)])
         env = SubprocVecEnv(
-            [lambda:  gym.make("MountainCar-v0") for i in range(args.n_envs)])
-
-        #env = SubprocVecEnv([lambda:  gym.make("CartPole-v1") for i in range(args.n_envs)])
-
-        #env = gym.make("CartPole-v1")
+            [lambda:  gym.make(args.env) for i in range(args.n_envs)])
+        action_space = env.action_space.n
+        obs_space = env.observation_space.shape[0]
+        agent = DDQNActor(args, obs_space, action_space)
+        if args.load:
+            agent.load()
         
         trainer = Trainer(args, agent, env, obs_space)
         trainer.run()
     else:
         import torch
         done = True
-        env = gym.make("MountainCar-v0", render_mode="human")
+        env = gym.make(args.env, render_mode="human")
+        action_space = env.action_space.n
+        obs_space = env.observation_space.shape[0]
+        agent = DDQNActor(args, obs_space, action_space)
+        if args.load:
+            agent.load()
         total_reward = 0
         total_int_reward = 0
-        print(agent.buffer.max_intrinsic_reward)
+        print(agent.buffer._reward_stats)
         for _ in tqdm.tqdm(range(args.max_timesteps * 2)):
             if done:
                 state, _ = env.reset()

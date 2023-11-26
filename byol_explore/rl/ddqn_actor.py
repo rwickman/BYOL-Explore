@@ -34,11 +34,15 @@ class DDQNActor:
         self.byol_hindsight = BYOLHindSight(
             state_dim,
             action_dim,
-            latent_dim=state_dim,
-            num_hidden=2,
+            latent_dim=self.args.byol_emb_dim,
+            num_hidden=self.args.byol_num_hidden,
             num_units=self.args.units,
-            emb_dim=state_dim,
-            noise_dim=state_dim).to(self.device)
+            emb_dim=self.args.byol_latent_dim,
+            noise_dim=self.args.byol_latent_dim).to(self.device)
+        
+        print("NUMBER OF BYOL PARAMS: ", sum(p.numel() for p in self.byol_hindsight.parameters() if p.requires_grad))
+        print("NUMBER OF Q-net PARAMS: ", sum(p.numel() for p in self.q_net.parameters() if p.requires_grad))
+        
 
         self.buffer = ExpertReplayBufferManager(
             self.args, state_dim, self.args.memory_cap)
@@ -139,7 +143,6 @@ class DDQNActor:
             "q_net": self.q_net.state_dict(),
             "q_net_intrinsic": self.q_net_intrinsic.state_dict(),
             "hindsight": self.byol_hindsight.state_dict(),
-            "l2_norm": self.byol_hindsight.mean_l2norm,
         }
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json") 
@@ -164,7 +167,6 @@ class DDQNActor:
         self.q_net.load_state_dict(model_dict["q_net"])
         self.q_net_intrinsic.load_state_dict(model_dict["q_net_intrinsic"])
         self.byol_hindsight.load_state_dict(model_dict["hindsight"])
-        self.byol_hindsight.mean_l2norm = model_dict["l2_norm"]
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json")
         byol_train_dict_file = os.path.join(self.args.save_dir, "byol_train_dict.json")
@@ -202,7 +204,8 @@ class DDQNActor:
             rewards,
             next_states,
             dones,
-            n_step,
+            n_step=n_step,
+            is_weight=is_weight,
             min_total_reward=self.buffer.reward_bounds[0],
             max_total_reward=self.buffer.reward_bounds[1])
 
@@ -212,13 +215,22 @@ class DDQNActor:
             intrinsic_rewards.detach(),
             org_next_states,
             org_dones,
-            min_total_reward=self.buffer.intrinsic_reward_bounds[0],
-            max_total_reward=self.buffer.intrinsic_reward_bounds[1])
-        
+            is_weight=is_weight)
+
+        if len(self._train_dict["loss"]) % 256 == 0:
+            print(f"is_weight {is_weight}")
+            print(f"loss {loss} intrinsic_loss {intrinsic_loss}")
+            print(f"td_errors {td_errors[:5]} td_errors_int {td_errors_int[:5]}")
+            print(f"intrinsic_rewards {intrinsic_rewards[:5]}")
+            print(f"rewards {rewards[:5]}")
+            print(f"n_step {n_step}")
+
+
         # Update the the PER priorities
         if len(idxs) > 0:
             td_errors = td_errors + self.args.per_intrinsic_priority * td_errors_int
             start_idx = len(td_errors) - len(idxs)
+            # print(f"len(idxs) {len(idxs)} start_idx {start_idx} ")
             self.buffer.update_priority(td_errors[start_idx:], idxs)
         
 

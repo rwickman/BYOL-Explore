@@ -91,7 +91,6 @@ class BYOLHindSight(nn.Module):
         obs_emb = self.embedding.get_tgt_emb(obs)
         obs_emb = F.normalize(obs_emb)
 
-
         # Sample the latent
         latent = self.generator(obs_emb, action, obs_emb_next)
 
@@ -99,9 +98,9 @@ class BYOLHindSight(nn.Module):
         obs_emb_next_pred = self.world_model(obs_emb, action, latent)
         obs_emb_next_pred = F.normalize(obs_emb_next_pred)
 
-
         # Compute the contrastive loss
         con_loss_val = con_loss(self.critic, obs_emb, action, latent).mean()
+        # if self.normalizer.c % 128 == 0:
 
         # Compute the recon loss
         recon_loss_val = recon_loss(obs_emb_next_pred, obs_emb_next).mean()

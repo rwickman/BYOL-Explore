@@ -64,6 +64,10 @@ class PriortizedReplay:
         if n_step > 1:
             rewards, next_states, dones = self._get_n_step_trajectory(data_idxs, n_step)
         
+        # Anneal beta towards 1.0
+        # self.beta += 0.01
+        # self.beta = min(self.beta, 1.0)
+
         sampling_probabilities = priorities / self.tree.total()
         is_weight = np.power(self.tree.size * sampling_probabilities, -self.beta)
         is_weight /= is_weight.max()
