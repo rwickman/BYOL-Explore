@@ -1,14 +1,16 @@
 import torch
 import torch.nn as nn
-
+from torch.optim import Adam
 import numpy as np
 
-from torch.optim import Adam
+from byol_explore.networks.utils import create_mlp
+
 
 def weighted_smooth_l1_loss(input, target, weights):
     # type: (Tensor, Tensor, Tensor) -> Tensor
     t = torch.abs(input - target)
     return (weights * torch.where(t < 1, 0.5 * t ** 2, t - 0.5)).mean()
+
 
 class QNet(nn.Module):
     def __init__(self, state_dim, action_dim, hidden_dim, num_hidden=1, gamma=0.997, tau=0.05, continuous=False):
@@ -17,8 +19,8 @@ class QNet(nn.Module):
         self.tgt_tau = tau
         self.continuous = continuous
 
-        self.net = self._init_net(state_dim, action_dim, hidden_dim, num_hidden)
-        self.tgt_net = self._init_net(state_dim, action_dim, hidden_dim, num_hidden)
+        self.net = create_mlp(state_dim, num_hidden, hidden_dim, action_dim)
+        self.tgt_net = create_mlp(state_dim, num_hidden, hidden_dim, action_dim)
         self.tgt_net.eval()
 
         self.optimizer = Adam(self.net.parameters(), lr=2e-4)

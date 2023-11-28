@@ -3,13 +3,14 @@ import numpy as np
 import torch
 
 from byol_explore.rl.per.sum_tree import SumTree
-from byol_explore.utils.util import get_device, get_n_step_trajectory
+from byol_explore.utils.util import get_device, get_n_step_trajectory, get_k_future_states
 
 class PriortizedReplay:
 
-    def __init__(self, capacity, state_dim, alpha=0.6, beta=0.4, error_threshold=0.01, gamma=0.997):
+    def __init__(self, capacity, state_dim, alpha=0.6, beta=0.4, error_threshold=0.01, gamma=0.997, byol_steps=3):
         self.state_dim = state_dim
         self.gamma = gamma
+        self.byol_steps = byol_steps
         self.tree = SumTree(capacity)
         self.capacity = capacity
         self.alpha = alpha
@@ -72,7 +73,12 @@ class PriortizedReplay:
         is_weight = np.power(self.tree.size * sampling_probabilities, -self.beta)
         is_weight /= is_weight.max()
 
-        batch = (states, actions, rewards, next_states, org_next_states, dones, org_dones)
+
+        ind, byol_states, byol_actions, _, _, _ = self._create_n_step_data(data_idxs, self.byol_steps + 1)
+        byol_states = np.array(byol_states)
+        byol_actions = np.array(byol_actions)
+
+        batch = (states, actions, rewards, next_states, org_next_states, dones, org_dones, byol_states, byol_actions)
 
         return batch, idxs, is_weight
 
@@ -80,14 +86,20 @@ class PriortizedReplay:
         p = self._get_priority(error)
         self.tree.update(idx, p)
 
-    def _get_n_step_trajectory(self, ind, n_step):
+    def _create_n_step_data(self, ind, n_step):
         # Extract the n_step trajectories from the tree
         rewards = []
+        states = []
         next_states = []
+        actions = []
         dones = []
-        # print("\nn_step", n_step)
+
         for idx in ind:
+            states.append([])
+            actions.append([])
             for i in range(n_step):
+                states[-1].append(self.tree.data[(idx + i) % self.size][0])
+                actions[-1].append(self.tree.data[(idx + i) % self.size][1])
                 rewards.append(self.tree.data[(idx + i) % self.size][2])
                 next_states.append(self.tree.data[(idx + i) % self.size][3])
                 # print("NEXT STATE: ", self.tree.data[(idx + i) % self.size][3], "DONE", self.tree.data[(idx + i) % self.size][4])
@@ -95,10 +107,11 @@ class PriortizedReplay:
 
         # Create new indexes corresponding to the extracted data 
         ind = np.arange(0, n_step * len(ind), n_step)
-        # print("UPDATED:", ind)
-        # print("next_states", next_states)
-        # print("rewards", rewards)
-        # print("dones", dones)
+
+        return ind, states, actions, rewards, next_states, dones
+
+    def _get_n_step_trajectory(self, ind, n_step):
+        ind, _, _, rewards, next_states, dones = self._create_n_step_data(ind, n_step)
 
         rewards, next_states, dones = get_n_step_trajectory(
             ind, n_step, next_states, rewards, dones, self.size, self.gamma)

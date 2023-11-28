@@ -1,17 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-def create_mlp(inp_size, num_hidden, num_units, out_size):
-    layers = [nn.Linear(inp_size, num_units), nn.GELU()]
-    for _ in range(num_hidden - 1):
-        layers.append(nn.Linear(num_units, num_units))
-        layers.append(nn.GELU())
-    
-    layers.append(nn.Linear(num_units, out_size))
-    
-    return nn.Sequential(*layers) 
-
+from byol_explore.networks.utils import create_mlp
+from byol_explore.utils.util import get_device
 
 class Embedding(nn.Module):
     def __init__(self, obs_dim, emb_dim, num_hidden, num_units, tau=0.01):
@@ -49,6 +40,7 @@ class Generator(nn.Module):
             num_hidden,
             num_units,
             latent_dim)
+        self.device = get_device()
 
     
     def forward(self, obs, action, obs_next):
@@ -56,7 +48,7 @@ class Generator(nn.Module):
         action_one_hot = F.one_hot(action, num_classes=self.action_dim)
 
         # Sample random noise
-        noise = torch.randn(obs.shape[0], self.noise_dim).to("cuda")
+        noise = torch.randn(obs.shape[0], self.noise_dim).to(self.device)
 
         # Predict the latent
         x = torch.concatenate((obs, action_one_hot, obs_next, noise), dim=1)
@@ -78,9 +70,6 @@ class Critic(nn.Module):
             1)
 
     def forward(self, obs, action, latent):
-        # print("CRITIC", obs.shape, action.shape, latent.shape)
-        # print("action", action)
-        # print("latent", latent)
         # Map action to one-hot
         action_one_hot = F.one_hot(action, num_classes=self.action_dim)
 
@@ -93,23 +82,35 @@ class Critic(nn.Module):
 
 class WorldModel(nn.Module):
     """Predicts the next state."""
-    def __init__(self, obs_dim, action_dim, latent_dim, num_hidden, num_units):
+    def __init__(self, obs_dim, emb_dim, latent_dim, num_hidden, num_units):
         super().__init__()
-        # x_t+1 = f(x_t, a_t, z_t+1)
-        self.action_dim = action_dim
 
         self.net = create_mlp(
-            obs_dim + action_dim + latent_dim,
+            emb_dim + latent_dim,
             num_hidden,
             num_units,
             obs_dim)
 
-    def forward(self, obs, action, latent):
-        # Map action to one-hot
-        action_one_hot = F.one_hot(action, num_classes=self.action_dim)
+    def forward(self, belief, latent):
+        # # Map action to one-hot
+        # action_one_hot = F.one_hot(action, num_classes=self.action_dim)
 
         # Predict the next observation
-        x = torch.concatenate((obs, action_one_hot, latent), dim=1)
+        x = torch.concatenate((belief, latent), dim=1)
         x = self.net(x)
 
         return x
+
+
+class OpenLoop(nn.Module):
+    def __init__(self, emb_dim, action_dim, num_units):
+        super().__init__()
+        self.action_dim = action_dim
+        self.emb_dim = emb_dim
+        self.gru = nn.GRUCell(action_dim, hidden_size=emb_dim)
+
+    def forward(self, action, hidden_state):
+        # Map action to one-hot
+        action_one_hot = F.one_hot(action, num_classes=self.action_dim).float()
+        hidden_state = self.gru(action_one_hot, hidden_state)
+        return hidden_state

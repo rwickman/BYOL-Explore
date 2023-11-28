@@ -5,6 +5,20 @@ import numpy as np
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def get_k_future_states(ind, states, actions, k, size):
+    future_states = []
+    future_actions = []
+    for i in range(k):
+        future_states.append(states[ (ind + i) % size ])
+        future_actions.append(actions[ (ind + i) % size ])
+
+    # (batch, k, state_dim)
+    future_states = np.swapaxes(np.array(future_states), 0, 1)
+    # (batch, k, 1)
+    future_actions = np.swapaxes(np.array(future_actions), 0, 1)
+
+
+    return future_states, future_actions
 
 def get_n_step_trajectory(ind, n_step, next_states, rewards, dones, size, gamma):
     n_rewards, n_next_states, n_dones = [], [], []

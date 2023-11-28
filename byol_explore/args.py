@@ -22,7 +22,7 @@ def get_args():
     
     parser.add_argument("--units", type=int, default=256,
         help="Number of hidden units to use in the networks")
-    parser.add_argument("--num_hidden", type=int, default=1,
+    parser.add_argument("--num_hidden", type=int, default=2,
         help="Number of hidden layers to use in the policy networks")
     parser.add_argument("--num_episodes", type=int, default=16384,
         help="Number of episodes to run for each environment.")
@@ -30,7 +30,7 @@ def get_args():
         help="Maximum number of timesteps in the environment")
     parser.add_argument("--train_iter", type=int, default=2048, 
         help="How many timesteps to collect in each environment before training the networks.")
-    parser.add_argument("--batch_size", type=int, default=128, 
+    parser.add_argument("--batch_size", type=int, default=96, 
         help="Batch size of the updates.")
     parser.add_argument("--n_envs", type=int, default=16, 
         help="Number of environments to run simultaneously")
@@ -70,6 +70,8 @@ def get_args():
         help="Beta used for PER.")
     dqn_args.add_argument("--per_intrinsic_priority", type=float, default=0.1, 
         help="How much to scale the error for intrinsic error for computing the priority.")
+    dqn_args.add_argument("--expert_batch_size", type=int, default=32, 
+        help="Percentage of expert experiences to use.")
 
     byol_args = parser.add_argument_group("BYOL-Hindsight")
     byol_args.add_argument("--recon_lam", type=float, default=1.0,
@@ -84,6 +86,16 @@ def get_args():
         help="Size of the BYOL latent dimension.")
     byol_args.add_argument("--byol_num_hidden", type=int, default=2,
         help="Size of the BYOL latent dimension.")
+    byol_args.add_argument("--byol_steps", type=int, default=3,
+        help="Number of steps to predict in the future.")
+
+    actor_args = parser.add_argument_group("Actor")
+    actor_args.add_argument("--actor_delay", type=int, default=2,
+        help="Delay updates for Actor network.")
+    actor_args.add_argument("--actor_lr", type=float, default=1e-3,
+        help="Learning Rate for the actor network.")
+    actor_args.add_argument("--use_actor", action="store_true",
+        help="Use the actor policy.")
 
     parser.add_argument("--no_ngu", action="store_true",
         help="Don't use NGU.")

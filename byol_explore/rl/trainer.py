@@ -63,12 +63,15 @@ class Trainer:
                     torch.tensor(self._last_obs, dtype=torch.float32).to(self.device))
 
                 states, rewards, dones, info = self.env.step(actions)
+                byol_states = torch.concatenate(
+                    (torch.tensor(self._last_obs, dtype=torch.float32).unsqueeze(1),
+                    torch.tensor(states, dtype=torch.float32).unsqueeze(1)),
+                    dim=1
+                ).to(self.device)
 
                 intrinsic_rewards = self.agent.byol_hindsight.get_intrinsic_reward(
-                    torch.tensor(self._last_obs, dtype=torch.float32).to(self.device),
-                    torch.tensor(actions).to(self.device),
-                    torch.tensor(states, dtype=torch.float32).to(self.device)).detach().cpu().numpy()
-
+                    byol_states,
+                    torch.tensor(actions).to(self.device).unsqueeze(1)).detach().cpu().numpy()
             
             
             self._update_trajectories(states, actions, rewards, intrinsic_rewards, dones)

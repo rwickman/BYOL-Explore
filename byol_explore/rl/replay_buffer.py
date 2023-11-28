@@ -3,8 +3,8 @@ import numpy as np
 from dataclasses import dataclass
 from byol_explore.rl.per.prioritized_replay import PriortizedReplay
 import json, os
-from byol_explore.utils.util import get_device, get_n_step_trajectory
-
+from byol_explore.utils.util import get_device, get_n_step_trajectory, get_k_future_states
+import random
 
 @dataclass
 class Trajectory:
@@ -79,7 +79,7 @@ class ReplayBuffer:
         ind = np.random.randint(0, self.size, size=batch_size)
 
         states, actions, next_states = self.states[ind], self.actions[ind], self.next_states[ind]
-
+        byol_states, byol_actions = get_k_future_states(ind, self.states, self.actions, self.args.byol_steps + 1, self.size)
         if n_step == 1:
             return (
                 states,
@@ -89,6 +89,8 @@ class ReplayBuffer:
                 next_states,
                 self.dones[ind],
                 self.dones[ind],
+                byol_states,
+                byol_actions,
             )
         else:
             org_next_states, org_dones = next_states, self.dones[ind]
@@ -100,7 +102,9 @@ class ReplayBuffer:
                 next_states,
                 org_next_states,
                 dones,
-                org_dones
+                org_dones,
+                byol_states,
+                byol_actions,
             )
 
     def save(self, out_file):
@@ -209,7 +213,12 @@ class ExpertReplayBuffer(ReplayBuffer):
         if total_reward > self.total_reward:
             return True
         elif total_reward == self.total_reward:
-            return ep_return > self.ep_return
+            if ep_return == self.ep_return:
+                return random.random() <= 0.001
+            else:
+                return ep_return > self.ep_return
+        else:
+            return False
 
     def save(self, out_file):
         """Save the expert replay buffer."""
@@ -253,7 +262,7 @@ class ExpertReplayBufferManager:
 
         # Initialize the normal replay buffer
         self.buffer = PriortizedReplay(
-            max_size, state_dim, alpha=self.args.per_alpha, beta=self.args.per_beta)
+            max_size, state_dim, alpha=self.args.per_alpha, beta=self.args.per_beta, byol_steps=self.args.byol_steps)
         
         # Initialize the expert replay buffers
         self.expert_buffers = [
@@ -291,7 +300,6 @@ class ExpertReplayBufferManager:
         self._reward_stats["min_total_int_reward"] = min(self._reward_stats["min_total_int_reward"], traj.total_intrinsic_reward)
         self._reward_stats["max_total_int_reward"] = max(self._reward_stats["max_total_int_reward"], traj.total_intrinsic_reward)
 
-
     def _add_trajectory(self, traj: Trajectory, errors: list):
         """Add the experiences from the trajectory to the normal replay buffer."""
         for i in range(len(traj.states)):
@@ -325,17 +333,15 @@ class ExpertReplayBufferManager:
 
     def sample(self, batch_size: int, n_step=1):
         """Sample experiences."""
-        # states, actions, rewards, next_states, org_next_states, dones, org_dones
-        batch = [[], [], [], [], [], [], []]
+        # states, actions, rewards, next_states, org_next_states, dones, org_dones byol_states, byol_actions
+        batch = [[], [], [], [], [], [], [], [], []]
 
         batch_is_weight = torch.ones(
             batch_size, dtype=torch.float32, device=self.device)
 
         # Sample half of the experiences from the experts.
-        expert_batch_size = int(batch_size * 0.5)
         if self.args.num_experts > 1:
-            normal_batch_size = batch_size - expert_batch_size
-            size_per_expert = expert_batch_size // self.args.num_experts
+            size_per_expert = self.args.expert_batch_size // self.args.num_experts
 
             # Get the probability of sampling each expert
             expert_rewards = np.array([e.total_reward + e.ep_return for e in self.expert_buffers])
@@ -357,14 +363,11 @@ class ExpertReplayBufferManager:
             sample_probs = torch.tensor(sample_probs, dtype=torch.float32, device=self.device)
             expert_is_weights = (self.expert_size * sample_probs) ** -self.buffer.beta
             expert_is_weights = expert_is_weights / expert_is_weights.max()
-
-        else:
-            normal_batch_size = batch_size
         # Sample the normal replay buffer
         
         idxs, is_weight = [], []
-        if self.buffer.size >= normal_batch_size:
-            normal_batch, idxs, is_weight = self.buffer.sample(normal_batch_size, n_step)
+        if self.buffer.size >= self.args.batch_size:
+            normal_batch, idxs, is_weight = self.buffer.sample(self.args.batch_size, n_step)
             for i in range(len(normal_batch)):
                 batch[i].append(normal_batch[i])
 
@@ -373,7 +376,7 @@ class ExpertReplayBufferManager:
             batch[i] = torch.tensor(np.concatenate(batch[i])).to(self.device)
 
         batch_is_weight = torch.ones(len(batch[i]), dtype=torch.float32, device=self.device)
-        batch_is_weight[:len(is_weight)] = expert_is_weights
+        batch_is_weight[:len(expert_is_weights)] = expert_is_weights
         batch_is_weight[-len(is_weight):] = torch.tensor(is_weight, dtype=torch.float32).to(self.device)
 
         return batch, idxs, batch_is_weight
