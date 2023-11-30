@@ -10,8 +10,8 @@ class Embedding(nn.Module):
         # Value used to update the target network
         self.tau = tau
 
-        self.net = create_mlp(obs_dim, num_hidden, num_units, emb_dim)
-        self.net_tgt = create_mlp(obs_dim, num_hidden, num_units, emb_dim)
+        self.net = create_mlp(obs_dim, num_hidden, num_units, emb_dim, dropout_prob=0.2)
+        self.net_tgt = create_mlp(obs_dim, num_hidden, num_units, emb_dim, dropout_prob=0.2)
     
     def update_target(self):
         """Perform soft update of the target network."""
@@ -39,7 +39,8 @@ class Generator(nn.Module):
             2 * obs_dim + action_dim + noise_dim,
             num_hidden,
             num_units,
-            latent_dim)
+            latent_dim,
+            dropout_prob=0.2)
         self.device = get_device()
 
     
@@ -67,7 +68,8 @@ class Critic(nn.Module):
             obs_dim + action_dim + latent_dim,
             num_hidden,
             num_units,
-            1)
+            1,
+            dropout_prob=0.2)
 
     def forward(self, obs, action, latent):
         # Map action to one-hot
@@ -89,7 +91,8 @@ class WorldModel(nn.Module):
             emb_dim + latent_dim,
             num_hidden,
             num_units,
-            obs_dim)
+            obs_dim,
+            dropout_prob=0.2)
 
     def forward(self, belief, latent):
         # # Map action to one-hot

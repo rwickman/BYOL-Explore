@@ -65,8 +65,11 @@ class BYOLHindSight(nn.Module):
 
     def get_intrinsic_reward(self, obs_steps, actions):
         with torch.no_grad():
+
             belief = self.embedding(obs_steps[:, 0])
-    
+            # print("obs_steps", obs_steps[:5], obs_steps.shape)
+            # print("belief", belief[:5], belief.shape)
+
             intrinsic_reward = torch.zeros(obs_steps.shape[0], device=self.device)
             for i in range(obs_steps.shape[1] - 1):
                 # obs = obs_steps[:, i]
@@ -104,7 +107,9 @@ class BYOLHindSight(nn.Module):
         con_loss_val = torch.zeros(obs_steps.shape[0]).to(self.device)
         recon_loss_val = torch.zeros(obs_steps.shape[0]).to(self.device)
         belief = self.embedding(obs_steps[:, 0])
-
+        # print("obs_steps", obs_steps[:5], obs_steps.shape)
+        # print("belief", belief[:5], belief.shape)
+        self.embedding.net_tgt.eval()
         for i in range(obs_steps.shape[1] - 1):
             obs_next = obs_steps[:, i+1]
             action = actions[:, i]
@@ -116,7 +121,7 @@ class BYOLHindSight(nn.Module):
             with torch.no_grad():
                 obs_emb_next = self.embedding.get_tgt_emb(obs_next)
                 obs_emb_next = F.normalize(obs_emb_next).detach()
-
+        
             # Sample the latent
             latent = self.generator(belief, action, obs_emb_next)
 
@@ -131,6 +136,7 @@ class BYOLHindSight(nn.Module):
             recon_loss_val += recon_loss(obs_emb_next_pred, obs_emb_next) * is_weights
             belief = next_belief
 
+        self.embedding.net_tgt.train()
         recon_loss_val = recon_loss_val.mean()  / (obs_steps.shape[1] - 1)
         con_loss_val = con_loss_val.mean() / (obs_steps.shape[1] - 1)
         loss = self.lam * recon_loss_val + con_loss_val

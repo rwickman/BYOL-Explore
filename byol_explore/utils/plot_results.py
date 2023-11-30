@@ -14,8 +14,11 @@ def plot(save_dir, w):
     with open(os.path.join(save_dir, "byol_train_dict.json")) as f:
         byol_train_dict = json.load(f)
     
+    if "actor_loss" in train_dict:
+        fig, axs = plt.subplots(5)
+    else:
+        fig, axs = plt.subplots(4)
 
-    fig, axs = plt.subplots(4)
     axs[0].plot(moving_average(train_dict["loss"]))
     axs[0].set(ylabel="Q Loss")
     
@@ -27,6 +30,11 @@ def plot(save_dir, w):
 
     axs[3].plot(moving_average(train_dict["total_int_rewards"]))
     axs[3].set(ylabel="Total Intrinsic Rewards")
+
+    if "actor_loss" in train_dict:
+        axs[4].plot(moving_average(train_dict["actor_loss"]))
+        axs[4].set(ylabel="ACTOR LOSS")
+
     plt.show()
     
     fig, axs = plt.subplots(2)

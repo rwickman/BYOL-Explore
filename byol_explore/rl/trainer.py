@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import time
-
+import random
 from byol_explore.rl.replay_buffer import Trajectory
 
 class Trainer:
@@ -57,10 +57,11 @@ class Trainer:
         self._last_obs = self.env.reset()
         ep_idx = 0
         self._cur_step = 0
+        use_actor = self.args.use_actor
         while ep_idx < self.args.num_episodes:
             with torch.no_grad():
                 actions = self.agent(
-                    torch.tensor(self._last_obs, dtype=torch.float32).to(self.device))
+                    torch.tensor(self._last_obs, dtype=torch.float32).to(self.device), use_actor=use_actor)
 
                 states, rewards, dones, info = self.env.step(actions)
                 byol_states = torch.concatenate(
@@ -68,11 +69,11 @@ class Trainer:
                     torch.tensor(states, dtype=torch.float32).unsqueeze(1)),
                     dim=1
                 ).to(self.device)
-
+                self.agent.byol_hindsight.eval()
                 intrinsic_rewards = self.agent.byol_hindsight.get_intrinsic_reward(
                     byol_states,
                     torch.tensor(actions).to(self.device).unsqueeze(1)).detach().cpu().numpy()
-            
+                self.agent.byol_hindsight.train()
             
             self._update_trajectories(states, actions, rewards, intrinsic_rewards, dones)
             self._last_obs = states.copy()
@@ -91,8 +92,12 @@ class Trainer:
                     
                     if self.args.rand_beta:
                         self.args.ngu_beta = np.random.beta(1.0, 10)
+                    
+                    if self.args.use_actor and self.args.mix_train_policy:
+                        use_actor = random.random() >= 0.5
+                        print("use_actor", use_actor)
 
-                    print("self.args.ngu_beta", self.args.ngu_beta)
+                    #print("self.args.ngu_beta", self.args.ngu_beta)
 
             if self._cur_step % self.args.dqn_train_iter == 0 and self.agent.is_train_ready:
                 self.agent.train()

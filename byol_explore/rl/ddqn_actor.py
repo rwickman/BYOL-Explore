@@ -114,14 +114,12 @@ class DDQNActor:
 
             return action
 
-
-    def __call__(self, state, argmax=False):
-        if self.args.use_actor:
+    def __call__(self, state, argmax=False, use_actor=False):
+        if use_actor:
             return self._actor_pred(state, argmax)
         else:
             return self._q_pred(state, argmax)
 
-    
     def _sample_action(self, q_vals: torch.Tensor, argmax=False) -> int:
         """Sample an action from the given Q-values."""
         if not argmax and self.epsilon_threshold >= random.random():
@@ -178,8 +176,6 @@ class DDQNActor:
                 td_errors = self.q_net_intrinsic.get_td_errors(q_vals, td_targets)
                 td_errors_int = self.q_net_intrinsic.get_td_errors(q_intrinsic_vals, td_targets_intrinsic)
                 td_errors = td_errors + self.args.per_intrinsic_priority * td_errors_int
-
-
                 errors[start_idx:end_idx] = td_errors
 
         self.buffer.add(traj, errors)
@@ -190,6 +186,7 @@ class DDQNActor:
             "q_net": self.q_net.state_dict(),
             "q_net_intrinsic": self.q_net_intrinsic.state_dict(),
             "hindsight": self.byol_hindsight.state_dict(),
+            "actor": self.actor.state_dict(),
         }
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json") 
@@ -205,7 +202,6 @@ class DDQNActor:
             torch.save(model_dict, os.path.join(self.args.save_dir, f"models_{self._train_dict['episodes']}.pt"))
 
         torch.save(model_dict, self.save_file)
-        self.actor.save(self.args.save_dir)
 
 
     def load(self):
@@ -216,6 +212,7 @@ class DDQNActor:
         self.q_net.load_state_dict(model_dict["q_net"])
         self.q_net_intrinsic.load_state_dict(model_dict["q_net_intrinsic"])
         self.byol_hindsight.load_state_dict(model_dict["hindsight"])
+        self.actor.load_state_dict(model_dict["actor"])
 
         train_dict_file = os.path.join(self.args.save_dir, "train_dict.json")
         byol_train_dict_file = os.path.join(self.args.save_dir, "byol_train_dict.json")
@@ -225,12 +222,12 @@ class DDQNActor:
         if not self.args.evaluate:
             with open(byol_train_dict_file, "r") as f:
                 self.byol_hindsight.train_dict = json.load(f)
-        self.actor.load(self.args.save_dir)
 
     def train(self):
         """Train the model over the sampled batches of experiences."""
         if self.args.n_steps > 1:
-            n_step = betabinom.rvs(self.args.n_steps - 1, self.args.n_step_alpha, self.args.n_step_beta) + 1
+            #n_step = betabinom.rvs(self.args.n_steps - 1, self.args.n_step_alpha, self.args.n_step_beta) + 1
+            n_step = random.randint(1, self.args.n_steps)
         else:
             n_step = self.args.n_steps
 
@@ -244,9 +241,11 @@ class DDQNActor:
             self.byol_hindsight.update(byol_states, byol_actions, is_weight)
 
         # Get the intrinsic reward
+        self.byol_hindsight.eval()
         intrinsic_rewards = self.byol_hindsight.get_intrinsic_reward(
             byol_states, byol_actions)
-        
+        self.byol_hindsight.train()
+
         # Update the Q-networks
         loss, td_errors = self.q_net.train(
             states,
@@ -279,8 +278,6 @@ class DDQNActor:
         if len(self._train_dict["loss"]) % self.args.actor_delay == 0:
             with torch.no_grad():
                 q_vals = self.q_net(states) + self.beta * self.q_net_intrinsic(states)
-            # q_vals = torch.randn(q_vals.shape, device=self.device)
-            # q_vals[:, 0] = 100
             actor_loss = self.actor.train(states, q_vals, is_weight)
             self._train_dict["actor_loss"].append(actor_loss)
 
@@ -289,7 +286,6 @@ class DDQNActor:
             td_errors = td_errors + self.args.per_intrinsic_priority * td_errors_int
             start_idx = len(td_errors) - len(idxs)
             self.buffer.update_priority(td_errors[start_idx:], idxs)
-        
 
         self._train_dict["loss"].append(loss)
         self._train_dict["intrinsic_loss"].append(intrinsic_loss)

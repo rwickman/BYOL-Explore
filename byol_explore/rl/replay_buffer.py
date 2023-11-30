@@ -341,17 +341,19 @@ class ExpertReplayBufferManager:
 
         # Sample half of the experiences from the experts.
         if self.args.num_experts > 1:
-            size_per_expert = self.args.expert_batch_size // self.args.num_experts
+            num_expert_sample = 4
+            size_per_expert = self.args.expert_batch_size // num_expert_sample
 
             # Get the probability of sampling each expert
             expert_rewards = np.array([e.total_reward + e.ep_return for e in self.expert_buffers])
             expert_rewards = expert_rewards - expert_rewards.min() + 1.0
             select_prob = expert_rewards / expert_rewards.sum()
             sample_probs = []
+            expert_ind = np.random.choice(self.args.num_experts, p=select_prob, size=num_expert_sample, replace=False)
 
             # Sample the expert replay buffers
-            for _ in range(self.args.num_experts):
-                i = np.random.choice(self.args.num_experts, p=select_prob)
+            for idx in range(num_expert_sample):
+                i = expert_ind[idx]
                 if self.expert_buffers[i].is_expert:
                     expert_batch = self.expert_buffers[i].sample(size_per_expert, n_step)
                     for j in range(len(expert_batch)):

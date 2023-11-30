@@ -13,19 +13,20 @@ def con_loss(critic, obs, actions, latents):
     K = obs.shape[0] 
     latents_tiled = latents.tile((latents.shape[0], 1, 1))
 
-    entry_fn = torch.vmap(critic, in_dims=(None, None, 1))
+    entry_fn = torch.vmap(critic, in_dims=(None, None, 1), randomness="different")
     # batch_fn = torch.vmap(entry_fn, in_dims=(0, 0, None))
 
     # print(obs.shape, actions.shape, latents.shape)
     scores = torch.exp(entry_fn(obs, actions, latents_tiled))
 
-    squeezed_scores = scores.squeeze()
+    squeezed_scores = scores.squeeze().T
 
     # Manually compute the scores to verify this is correct
-    # real_scores = torch.zeros((obs.shape[0], obs.shape[0]))
+    # real_scores = torch.zeros((obs.shape[0], obs.shape[0]), device="cuda")
     # for i in range(obs.shape[0]):
     #     for j in range(obs.shape[0]):
     #         real_scores[i, j] = critic(obs[i].unsqueeze(0), actions[i].unsqueeze(0), latents[j].unsqueeze(0)).squeeze()
+    
 
     diag_scores = torch.diag(squeezed_scores)
     ratios = diag_scores / (squeezed_scores.sum(dim=0) * (1/ K) + 1e-5)

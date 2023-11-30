@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 import numpy as np
-
+import copy
 from byol_explore.networks.utils import create_mlp
 
 
@@ -20,8 +20,13 @@ class QNet(nn.Module):
         self.continuous = continuous
 
         self.net = create_mlp(state_dim, num_hidden, hidden_dim, action_dim)
+        
         self.tgt_net = create_mlp(state_dim, num_hidden, hidden_dim, action_dim)
         self.tgt_net.eval()
+
+        self.tgt_net_2 = create_mlp(state_dim, num_hidden, hidden_dim, action_dim)
+        self.tgt_net_2.eval()
+
 
         self.optimizer = Adam(self.net.parameters(), lr=2e-4)
         self.loss_fn = nn.SmoothL1Loss()
@@ -42,6 +47,10 @@ class QNet(nn.Module):
         for tgt_param, param in zip(self.tgt_net.parameters(), self.net.parameters()):
             tgt_param.data.copy_(
                 self.tgt_tau * param.data + (1.0 - self.tgt_tau) * tgt_param.data)
+        
+        for tgt_param, param in zip(self.tgt_net_2.parameters(), self.net.parameters()):
+            tgt_param.data.copy_(
+                self.tgt_tau * 0.5 * param.data + (1.0 - self.tgt_tau * 0.5) * tgt_param.data)
 
     def forward(self, state):
         return self.net(state)
@@ -51,15 +60,20 @@ class QNet(nn.Module):
         q_vals_matrix = self.net(states)
         q_vals = q_vals_matrix.gather(1, actions.unsqueeze(1)).squeeze(1)
     
-        # Run policy on next states
+        # Run policy on next states 75966.9375, 29000
         with torch.no_grad():
             # Get the next actions
-            next_actions = self.net(next_states).argmax(dim=1).detach()
+            q_next = self.net(next_states)
+            next_actions = q_next.argmax(dim=1).detach()
             q_next_target = self.tgt_net(next_states)
+            q_next_target_2 = self.tgt_net_2(next_states)
 
-            # Compute the td-targets using Double Q-Learning
-            dqn_target = q_next_target.gather(1, next_actions.unsqueeze(1)).squeeze(1).detach()
             
+            # Compute the td-targets using Double Q-Learning and use TD3 inspired min
+            dqn_target_1 = q_next_target.gather(1, next_actions.unsqueeze(1)).squeeze(1).detach()
+            dqn_target_2 = q_next_target_2.gather(1, next_actions.unsqueeze(1)).squeeze(1).detach()
+            dqn_target = torch.min(dqn_target_1, dqn_target_2)
+
             # # Small prevention for over-estimation 
             if max_total_reward != None:
                 dqn_target = dqn_target.clamp(max=max_total_reward, min=min_total_reward)
@@ -68,7 +82,7 @@ class QNet(nn.Module):
                 td_targets = rewards + self.gamma ** n_step * dqn_target
             else:
                 td_targets = rewards + self.gamma ** n_step * dqn_target * (1 - dones)
-        
+
         return q_vals, td_targets
 
     def get_td_errors(self, q_vals, td_targets):
@@ -85,8 +99,7 @@ class QNet(nn.Module):
             n_step=n_step,
             min_total_reward=min_total_reward,
             max_total_reward=max_total_reward)
-        
-        # print("q_vals", q_vals)
+
         self.optimizer.zero_grad()
         if is_weight != None:
             loss = weighted_smooth_l1_loss(q_vals, td_targets, is_weight)
@@ -100,6 +113,5 @@ class QNet(nn.Module):
         self._update_target()
 
         td_errors = self.get_td_errors(q_vals, td_targets)
-
 
         return loss.item(), td_errors

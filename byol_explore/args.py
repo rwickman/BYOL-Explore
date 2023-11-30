@@ -76,7 +76,7 @@ def get_args():
     byol_args = parser.add_argument_group("BYOL-Hindsight")
     byol_args.add_argument("--recon_lam", type=float, default=1.0,
         help="Lambda used for scaling the reconstruction error.")
-    byol_args.add_argument("--byol_delay", type=int, default=1,
+    byol_args.add_argument("--byol_delay", type=int, default=2,
         help="Delay updates for BYOL.")
     byol_args.add_argument("--rand_beta", action="store_true",
         help="Randomize the beta value.")
@@ -96,12 +96,14 @@ def get_args():
         help="Learning Rate for the actor network.")
     actor_args.add_argument("--use_actor", action="store_true",
         help="Use the actor policy.")
+    actor_args.add_argument("--mix_train_policy", action="store_true",
+        help="Switch between the DQN and actor policy during training.")
 
     parser.add_argument("--no_ngu", action="store_true",
         help="Don't use NGU.")
     parser.add_argument("--no_use_intrinsic_reward", action="store_true",
         help="Don't use intrinsic reward.")
-    parser.add_argument("--ngu_beta", type=float, default=0.01, 
+    parser.add_argument("--ngu_beta", type=float, default=0.2, 
         help="Factor to use to for the NGU intrinsic reward.")
     parser.add_argument("--ngu_epochs", type=int, default=5, 
         help="Number of epochs to train the NGU networks.")
